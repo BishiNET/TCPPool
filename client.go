@@ -53,29 +53,6 @@ func (p *pool) findOneAndRemove(hj *hijackConn) {
 	p.poolMu.RUnlock()
 
 }
-func (p *pool) find(hj []*hijackConn) []*list.Element {
-	allE := []*list.Element{}
-	p.poolMu.RLock()
-	defer p.poolMu.RUnlock()
-	for e := p.pool.Front(); e != nil; e = e.Next() {
-		expect := e.Value.(*hijackConn)
-		for _, h := range hj {
-			if expect == h {
-				allE = append(allE, e)
-			}
-		}
-	}
-	return allE
-}
-func (p *pool) poolSweep(hj []*hijackConn) {
-	if e := p.find(hj); len(e) > 0 {
-		p.poolMu.Lock()
-		defer p.poolMu.Unlock()
-		for _, eachE := range e {
-			p.pool.Remove(eachE)
-		}
-	}
-}
 
 func (p *pool) Close() {
 	p.poolMu.Lock()
@@ -97,12 +74,7 @@ func (p *pool) Push(c *hijackConn) bool {
 }
 
 func (p *pool) getConnectionFromPool() (c net.Conn, err error) {
-	toSweep := []*hijackConn{}
-	defer func() {
-		if len(toSweep) > 0 {
-			p.poolSweep(toSweep)
-		}
-	}()
+
 	for {
 		select {
 		case hc := <-p.current:
@@ -112,7 +84,6 @@ func (p *pool) getConnectionFromPool() (c net.Conn, err error) {
 				err = nil
 				return
 			}
-			toSweep = append(toSweep, hijack)
 		default:
 			err = ErrNoConnection
 			return
