@@ -75,7 +75,7 @@ func (p *pool) Push(c *hijackConn) bool {
 }
 
 func (p *pool) getConnectionFromPool() (c net.Conn, err error) {
-
+	hasEOF := false
 	for {
 		select {
 		case hc := <-p.current:
@@ -85,8 +85,13 @@ func (p *pool) getConnectionFromPool() (c net.Conn, err error) {
 				err = nil
 				return
 			}
+			if !hasEOF {
+				hasEOF = true
+			}
 		default:
-			err = ErrNoConnection
+			if hasEOF {
+				err = ErrNoConnection
+			}
 			return
 		}
 	}
