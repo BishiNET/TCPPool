@@ -23,7 +23,7 @@ const (
 type pool struct {
 	current chan net.Conn
 	pool    *list.List
-	poolMu  sync.RWMutex
+	poolMu  sync.Mutex
 }
 
 type ClientPool struct {
@@ -37,21 +37,15 @@ type ClientPool struct {
 }
 
 func (p *pool) findOneAndRemove(hj *hijackConn) {
-	p.poolMu.RLock()
-
+	p.poolMu.Lock()
+	defer p.poolMu.Unlock()
 	for e := p.pool.Front(); e != nil; e = e.Next() {
 		expect := e.Value.(*hijackConn)
 		if expect == hj {
-			p.poolMu.RUnlock()
-
-			p.poolMu.Lock()
 			p.pool.Remove(e)
-			p.poolMu.Unlock()
 			return
 		}
 	}
-
-	p.poolMu.RUnlock()
 
 }
 
