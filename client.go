@@ -30,26 +30,33 @@ type ClientPool struct {
 	poolMap     sync.Map
 	dialContext *net.Dialer
 	dialMu      sync.RWMutex
+	ep          *epollRoutine
+	stopped     context.Context
+	stop        context.CancelFunc
 }
 
-func (p *pool) find(hj *hijackConn) *list.Element {
+func (p *pool) find(hj []*hijackConn) []*list.Element {
+	allE := []*list.Element{}
 	p.poolMu.RLock()
 	defer p.poolMu.RUnlock()
 	for e := p.pool.Front(); e != nil; e = e.Next() {
 		expect := e.Value.(*hijackConn)
-		if expect == hj {
-			return e
+		for _, h := range hj {
+			if expect == h {
+				allE = append(allE, e)
+			}
 		}
 	}
-	return nil
+	return allE
 }
-func (p *pool) poolSweep(hj *hijackConn) {
-	if e := p.find(hj); e != nil {
+func (p *pool) poolSweep(hj []*hijackConn) {
+	if e := p.find(hj); len(e) > 0 {
 		p.poolMu.Lock()
-		p.pool.Remove(e)
-		p.poolMu.Unlock()
+		defer p.poolMu.Unlock()
+		for _, eachE := range e {
+			p.pool.Remove(eachE)
+		}
 	}
-	hj.Close()
 }
 
 func (p *pool) Close() {
@@ -72,17 +79,22 @@ func (p *pool) Push(c *hijackConn) bool {
 }
 
 func (p *pool) getConnectionFromPool() (c net.Conn, err error) {
+	toSweep := []*hijackConn{}
+	defer func() {
+		if len(toSweep) > 0 {
+			p.poolSweep(toSweep)
+		}
+	}()
 	for {
 		select {
 		case hc := <-p.current:
 			hijack := hc.(*hijackConn)
-			ehj := hijack.Error()
-			if ehj == nil {
+			if !hijack.IsEOF() {
 				c = net.Conn(hijack)
 				err = nil
 				return
 			}
-			p.poolSweep(hijack)
+			toSweep = append(toSweep, hijack)
 		default:
 			err = ErrNoConnection
 			return
@@ -95,10 +107,17 @@ func NewClientPool(maxSize ...int) (*ClientPool, error) {
 	if len(maxSize) > 0 {
 		SIZE = maxSize[0]
 	}
-	return &ClientPool{
+	ep, err := NewEpollRoutine()
+	if err != nil {
+		return nil, err
+	}
+	cp := &ClientPool{
 		poolSize:    SIZE,
 		dialContext: &net.Dialer{},
-	}, nil
+		ep:          ep,
+	}
+	cp.stopped, cp.stop = context.WithCancel(context.Background())
+	return cp, nil
 }
 
 func (cp *ClientPool) WithDialer(d *net.Dialer) {
@@ -130,6 +149,19 @@ func (cp *ClientPool) getDialer() *net.Dialer {
 	return cp.dialContext
 }
 
+func (cp *ClientPool) pushConn(conn *pool, ret net.Conn) (net.Conn, error) {
+	hj, err := newHijackConn(cp.stopped, ret)
+	if err != nil {
+		return nil, err
+	}
+	if !conn.Push(hj) {
+		ret.Close()
+		return nil, ErrPoolFull
+	}
+	cp.ep.Open(hj)
+	return hj, nil
+}
+
 func (cp *ClientPool) Dial(network, address string) (c net.Conn, err error) {
 	key := strings.ToLower(network) + address
 	conn := cp.getPool(key)
@@ -138,19 +170,13 @@ func (cp *ClientPool) Dial(network, address string) (c net.Conn, err error) {
 			return
 		}
 	}
-
 	ret, err := cp.getDialer().Dial(network, address)
-
 	if err == nil {
-		hj := newHijackConn(ret)
-		if !conn.Push(hj) {
-			ret.Close()
-			return nil, ErrPoolFull
-		}
-		c = net.Conn(hj)
+		c, err = cp.pushConn(conn, ret)
 	}
 	return
 }
+
 func (cp *ClientPool) DialContext(ctx context.Context, network, address string) (c net.Conn, err error) {
 	key := strings.ToLower(network) + address
 	conn := cp.getPool(key)
@@ -159,16 +185,9 @@ func (cp *ClientPool) DialContext(ctx context.Context, network, address string) 
 			return
 		}
 	}
-
 	ret, err := cp.getDialer().DialContext(ctx, network, address)
-
 	if err == nil {
-		hj := newHijackConn(ret)
-		if !conn.Push(hj) {
-			ret.Close()
-			return nil, ErrPoolFull
-		}
-		c = net.Conn(hj)
+		c, err = cp.pushConn(conn, ret)
 	}
 	return
 }
@@ -179,7 +198,10 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 		conn := connFromPool.(*pool)
 		hj, ok := c.(*hijackConn)
 		if !ok {
-			hj = newHijackConn(c)
+			hj, err = newHijackConn(cp.stopped, c)
+			if err != nil {
+				return
+			}
 		}
 		select {
 		case conn.current <- hj:
@@ -193,6 +215,13 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 }
 
 func (cp *ClientPool) Close() {
+	select {
+	case <-cp.stopped.Done():
+		return
+	default:
+	}
+	cp.stop()
+	cp.ep.Shutdown()
 	cp.poolMap.Range(func(_, value any) bool {
 		conn := value.(*pool)
 		conn.Close()
