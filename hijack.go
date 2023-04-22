@@ -1,48 +1,77 @@
 package tcppool
 
 import (
+	"context"
+	"fmt"
 	"net"
-	"sync"
+	"syscall"
 	"time"
+)
+
+var (
+	ErrUnknownConn = fmt.Errorf("unknown net.conn")
 )
 
 type hijackConn struct {
 	conn  net.Conn
-	err   error
-	errMu sync.RWMutex
+	fd    int
+	eof   context.Context
+	doEOF context.CancelFunc
 }
 
-func newHijackConn(c net.Conn) *hijackConn {
+// use syscall wouldn't dup the file descriptor
+func getFD(c net.Conn) int {
+	var fd int
+	var fs syscall.RawConn
+	switch t := c.(type) {
+	case *net.TCPConn:
+		fs, _ = t.SyscallConn()
+	case *net.UDPConn:
+		fs, _ = t.SyscallConn()
+	case *net.IPConn:
+		fs, _ = t.SyscallConn()
+	case *net.UnixConn:
+	default:
+	}
+	if fs != nil {
+		fs.Control(func(_fd uintptr) {
+			fd = int(_fd)
+		})
+	}
+	return fd
+
+}
+
+func newHijackConn(ctx context.Context, c net.Conn) (*hijackConn, error) {
+	fd := getFD(c)
+	if fd == 0 {
+		return nil, ErrUnknownConn
+	}
 	hj := &hijackConn{
 		conn: c,
+		fd:   fd,
 	}
-	return hj
+	hj.eof, hj.doEOF = context.WithCancel(ctx)
+	return hj, nil
 }
 
-func (hj *hijackConn) Error() error {
-	// fast-path , don't use read lock.
-	// In the most common case, reading is safe.
-	if hj.err != nil {
-		return hj.err
+func (hj *hijackConn) IsEOF() bool {
+	select {
+	case <-hj.eof.Done():
+		return true
+	default:
+		return false
 	}
-	hj.errMu.RLock()
-	err := hj.err
-	hj.errMu.RUnlock()
-	return err
+}
+func (hj *hijackConn) FD() int {
+	return hj.fd
 }
 
 // Read reads data from the connection.
 // Read can be made to time out and return an error after a fixed
 // time limit; see SetDeadline and SetReadDeadline.
 func (hj *hijackConn) Read(b []byte) (n int, err error) {
-	if n, err = hj.conn.Read(b); err != nil {
-		if err = hj.Error(); err != nil {
-			return
-		}
-		hj.errMu.Lock()
-		hj.err = err
-		hj.errMu.Unlock()
-	}
+	n, err = hj.conn.Read(b)
 	return
 }
 
@@ -50,20 +79,14 @@ func (hj *hijackConn) Read(b []byte) (n int, err error) {
 // Write can be made to time out and return an error after a fixed
 // time limit; see SetDeadline and SetWriteDeadline.
 func (hj *hijackConn) Write(b []byte) (n int, err error) {
-	if n, err = hj.conn.Write(b); err != nil {
-		if err = hj.Error(); err != nil {
-			return
-		}
-		hj.errMu.Lock()
-		hj.err = err
-		hj.errMu.Unlock()
-	}
+	n, err = hj.conn.Write(b)
 	return
 }
 
 // Close closes the connection.
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (hj *hijackConn) Close() error {
+	hj.doEOF()
 	return hj.conn.Close()
 }
 
