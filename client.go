@@ -139,7 +139,7 @@ func (cp *ClientPool) Dial(network, address string) (c net.Conn, err error) {
 	defer cp.dialMu.RUnlock()
 	ret, err := cp.dialContext.Dial(network, address)
 
-	if err != nil {
+	if err == nil {
 		hj := newHijackConn(ret)
 		if !conn.Push(hj) {
 			ret.Close()
@@ -162,7 +162,7 @@ func (cp *ClientPool) DialContext(ctx context.Context, network, address string) 
 	defer cp.dialMu.RUnlock()
 	ret, err := cp.dialContext.DialContext(ctx, network, address)
 
-	if err != nil {
+	if err == nil {
 		hj := newHijackConn(ret)
 		if !conn.Push(hj) {
 			ret.Close()
