@@ -88,10 +88,12 @@ func (hj *hijackConn) Write(b []byte) (n int, err error) {
 
 // Close closes the connection.
 // Any blocked Read or Write operations will be unblocked and return errors.
-func (hj *hijackConn) Close() error {
-	hj.onEOF(hj)
-	hj.doEOF()
-	return hj.conn.Close()
+func (hj *hijackConn) Close() (err error) {
+	if err = hj.conn.Close(); err == nil {
+		hj.onEOF(hj)
+		hj.doEOF()
+	}
+	return
 }
 
 // LocalAddr returns the local network address, if known.
