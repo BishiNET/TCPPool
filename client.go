@@ -13,6 +13,7 @@ var (
 	ErrPoolFull     = fmt.Errorf("too many connections")
 	ErrDestNotFound = fmt.Errorf("destination not found")
 	ErrNoConnection = fmt.Errorf("no connection")
+	ErrConnClosed   = fmt.Errorf("put a closed connection")
 )
 
 const (
@@ -80,7 +81,7 @@ func (p *pool) getConnectionFromPool() (c net.Conn, err error) {
 		case hc := <-p.current:
 			hijack := hc.(*hijackConn)
 			if !hijack.IsEOF() {
-				c = net.Conn(hijack)
+				c = hc
 				err = nil
 				return
 			}
@@ -200,6 +201,10 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 				return
 			}
 			cp.ep.Open(hj)
+		} else {
+			if hj.IsEOF() {
+				return ErrConnClosed
+			}
 		}
 		select {
 		case conn.current <- hj:
