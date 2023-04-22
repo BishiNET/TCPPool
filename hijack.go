@@ -17,6 +17,7 @@ type hijackConn struct {
 	fd    int
 	eof   context.Context
 	doEOF context.CancelFunc
+	onEOF func(hj *hijackConn)
 }
 
 // use syscall wouldn't dup the file descriptor
@@ -43,14 +44,15 @@ func getFD(c net.Conn) int {
 
 }
 
-func newHijackConn(ctx context.Context, c net.Conn) (*hijackConn, error) {
+func newHijackConn(ctx context.Context, c net.Conn, on func(hj *hijackConn)) (*hijackConn, error) {
 	fd := getFD(c)
 	if fd == 0 {
 		return nil, ErrUnknownConn
 	}
 	hj := &hijackConn{
-		conn: c,
-		fd:   fd,
+		conn:  c,
+		fd:    fd,
+		onEOF: on,
 	}
 	hj.eof, hj.doEOF = context.WithCancel(ctx)
 	return hj, nil
@@ -87,6 +89,7 @@ func (hj *hijackConn) Write(b []byte) (n int, err error) {
 // Close closes the connection.
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (hj *hijackConn) Close() error {
+	hj.onEOF(hj)
 	hj.doEOF()
 	return hj.conn.Close()
 }

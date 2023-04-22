@@ -35,6 +35,24 @@ type ClientPool struct {
 	stop        context.CancelFunc
 }
 
+func (p *pool) findOneAndRemove(hj *hijackConn) {
+	p.poolMu.RLock()
+
+	for e := p.pool.Front(); e != nil; e = e.Next() {
+		expect := e.Value.(*hijackConn)
+		if expect == hj {
+			p.poolMu.RUnlock()
+
+			p.poolMu.Lock()
+			p.pool.Remove(e)
+			p.poolMu.Unlock()
+			return
+		}
+	}
+
+	p.poolMu.RUnlock()
+
+}
 func (p *pool) find(hj []*hijackConn) []*list.Element {
 	allE := []*list.Element{}
 	p.poolMu.RLock()
@@ -150,7 +168,9 @@ func (cp *ClientPool) getDialer() *net.Dialer {
 }
 
 func (cp *ClientPool) pushConn(conn *pool, ret net.Conn) (net.Conn, error) {
-	hj, err := newHijackConn(cp.stopped, ret)
+	hj, err := newHijackConn(cp.stopped, ret, func(hj *hijackConn) {
+		conn.findOneAndRemove(hj)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +218,9 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 		conn := connFromPool.(*pool)
 		hj, ok := c.(*hijackConn)
 		if !ok {
-			hj, err = newHijackConn(cp.stopped, c)
+			hj, err = newHijackConn(cp.stopped, c, func(hj *hijackConn) {
+				conn.findOneAndRemove(hj)
+			})
 			if err != nil {
 				return
 			}
