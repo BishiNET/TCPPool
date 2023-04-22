@@ -183,7 +183,9 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 		if !ok {
 			hj = newHijackConn(c)
 		}
-		if !conn.Push(hj) {
+		select {
+		case conn.current <- hj:
+		default:
 			err = ErrPoolFull
 		}
 	} else {
