@@ -90,7 +90,7 @@ func (hj *hijackConn) Write(b []byte) (n int, err error) {
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (hj *hijackConn) Close() (err error) {
 	if err = hj.conn.Close(); err == nil {
-		hj.onEOF(hj)
+		go hj.onEOF(hj)
 		hj.doEOF()
 	}
 	return
