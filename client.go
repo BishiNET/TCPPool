@@ -162,8 +162,6 @@ func (cp *ClientPool) DialContext(ctx context.Context, network, address string) 
 		}
 	}
 
-	cp.dialMu.RLock()
-	defer cp.dialMu.RUnlock()
 	ret, err := cp.getDialer().DialContext(ctx, network, address)
 
 	if err == nil {
