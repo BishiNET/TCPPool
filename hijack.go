@@ -31,6 +31,7 @@ func getFD(c net.Conn) int {
 	case *net.IPConn:
 		fs, _ = t.SyscallConn()
 	case *net.UnixConn:
+		fs, _ = t.SyscallConn()
 	default:
 	}
 	if fs != nil {
