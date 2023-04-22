@@ -202,6 +202,10 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 			if err != nil {
 				return
 			}
+			if !conn.Push(hj) {
+				return nil, ErrPoolFull
+			}
+			cp.ep.Open(hj)
 		}
 		select {
 		case conn.current <- hj:
