@@ -62,14 +62,12 @@ func (p *pool) Close() {
 }
 
 func (p *pool) Push(c *hijackConn) bool {
-	select {
-	case p.current <- c:
-		p.poolMu.Lock()
-		p.pool.PushBack(c)
-		p.poolMu.Unlock()
-	default:
+	p.poolMu.Lock()
+	defer p.poolMu.Unlock()
+	if p.pool.Len() >= MAX_POOL_SIZE {
 		return false
 	}
+	p.pool.PushBack(c)
 	return true
 }
 
