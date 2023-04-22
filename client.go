@@ -203,7 +203,8 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 				return
 			}
 			if !conn.Push(hj) {
-				return nil, ErrPoolFull
+				err = ErrPoolFull
+				return
 			}
 			cp.ep.Open(hj)
 		}
