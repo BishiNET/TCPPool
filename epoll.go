@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
+	"unsafe"
 )
 
 const (
@@ -17,6 +18,40 @@ var (
 	ErrConnExists  = fmt.Errorf("connection existed")
 )
 
+type EpollEvent struct {
+	Events uint32
+	Data   [8]byte // unaligned uintptr
+}
+
+func EpollCtl(epfd, op, fd int, event *EpollEvent) (errno syscall.Errno) {
+	_, _, e := syscall.Syscall6(
+		syscall.SYS_EPOLL_CTL,
+		uintptr(epfd),
+		uintptr(op),
+		uintptr(fd),
+		uintptr(unsafe.Pointer(event)),
+		0, 0)
+	return e
+}
+
+func EpollWait(epfd int, events []EpollEvent, maxev, waitms int) (int, syscall.Errno) {
+	var ev unsafe.Pointer
+	var _zero uintptr
+	if len(events) > 0 {
+		ev = unsafe.Pointer(&events[0])
+	} else {
+		ev = unsafe.Pointer(&_zero)
+	}
+	r1, _, e := syscall.Syscall6(
+		syscall.SYS_EPOLL_PWAIT,
+		uintptr(epfd),
+		uintptr(ev),
+		uintptr(maxev),
+		uintptr(waitms),
+		0, 0)
+	return int(r1), e
+}
+
 type epollRoutine struct {
 	epollfd int
 	stopped context.Context
@@ -26,12 +61,13 @@ type epollRoutine struct {
 
 func NewEpollRoutine() (*epollRoutine, error) {
 	epfd, errno := syscall.EpollCreate1(syscall.EPOLL_CLOEXEC)
-	if errno != 0 {
+	if errno != nil {
 		return nil, ErrEpollCreate
 	}
 	e := &epollRoutine{
 		epollfd: epfd,
 	}
+	e.stopped, e.stop = context.WithCancel(context.Background())
 	go e.Run()
 	return e, nil
 }
@@ -41,17 +77,17 @@ func (e *epollRoutine) Open(hj *hijackConn) error {
 	if _, ok := e.fdMap.LoadOrStore(fd, hj); ok {
 		return ErrConnExists
 	}
-	var ev syscall.EpollEvent
+	var ev EpollEvent
 	ev.Events = syscall.EPOLLRDHUP | EPOLLET
-	ev.Fd = fd
-	if err := syscall.EpollCtl(e.epollfd, syscall.EPOLL_CTL_ADD, fd, &ev); err != nil {
-		return nil, ErrEpoll
+	*(**hijackConn)(unsafe.Pointer(&ev.Data)) = hj
+	if err := EpollCtl(e.epollfd, syscall.EPOLL_CTL_ADD, fd, &ev); err != 0 {
+		return ErrEpoll
 	}
 	return nil
 }
 func (e *epollRoutine) Close(hj *hijackConn) {
 	fd := hj.FD()
-	syscall.EpollCtl(e.epollfd, syscall.EPOLL_CTL_DEL, fd, nil)
+	EpollCtl(e.epollfd, syscall.EPOLL_CTL_DEL, fd, nil)
 	e.fdMap.Delete(fd)
 }
 
@@ -61,11 +97,11 @@ func (e *epollRoutine) Shutdown() {
 }
 
 func (e *epollRoutine) Run() {
-	var events [128]syscall.EpollEvent
+	var events [128]EpollEvent
 retry:
 	for {
-		n, err := syscall.EpollWait(e.epollfd, events[:], 128, -1)
-		if err != nil {
+		n, err := EpollWait(e.epollfd, events[:], 128, -1)
+		if err != 0 {
 			if err == syscall.EINTR {
 				continue retry
 			}
@@ -78,12 +114,11 @@ retry:
 		}
 		for i := 0; i < n; i++ {
 			if events[i].Events&(syscall.EPOLLERR|syscall.EPOLLRDHUP|syscall.EPOLLHUP) != 0 {
-				if c, ok := e.fdMap.Load(events[i].Fd); ok {
-					hj := c.(*hijackConn)
-					e.Close(hj)
-					// unblock all Read/Write call now and report EOF
-					hj.Close()
-				}
+				ev := events[i]
+				hj := *(**hijackConn)(unsafe.Pointer(&ev.Data))
+				e.Close(hj)
+				// unblock all Read/Write call now and report EOF
+				hj.Close()
 			}
 		}
 	}

@@ -20,7 +20,8 @@ type hijackConn struct {
 	onEOF func(hj *hijackConn)
 }
 
-// use syscall wouldn't dup the file descriptor
+// use syscallconn wouldn't duplicate the file descriptor
+// as we memtioned, use File() will make fd block again.
 func getFD(c net.Conn) int {
 	var fd int
 	var fs syscall.RawConn
@@ -70,6 +71,10 @@ func (hj *hijackConn) FD() int {
 	return hj.fd
 }
 
+func (hj *hijackConn) String() string {
+	return hj.conn.LocalAddr().String() + " -> " + hj.conn.RemoteAddr().String()
+}
+
 // Read reads data from the connection.
 // Read can be made to time out and return an error after a fixed
 // time limit; see SetDeadline and SetReadDeadline.
@@ -90,7 +95,7 @@ func (hj *hijackConn) Write(b []byte) (n int, err error) {
 // Any blocked Read or Write operations will be unblocked and return errors.
 func (hj *hijackConn) Close() (err error) {
 	if err = hj.conn.Close(); err == nil {
-		go hj.onEOF(hj)
+		hj.onEOF(hj)
 		hj.doEOF()
 	}
 	return
