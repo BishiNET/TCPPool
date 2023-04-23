@@ -116,7 +116,6 @@ retry:
 			if events[i].Events&(syscall.EPOLLERR|syscall.EPOLLRDHUP|syscall.EPOLLHUP) != 0 {
 				ev := events[i]
 				hj := *(**hijackConn)(unsafe.Pointer(&ev.Data))
-				e.Close(hj)
 				// unblock all Read/Write call now and report EOF
 				hj.Close()
 			}
