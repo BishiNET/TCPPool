@@ -76,6 +76,7 @@ func (cp *ClientPool) pushConn(conn *pool, ret net.Conn) (net.Conn, error) {
 	thePool := conn
 	hj, err := newHijackConn(cp.stopped, ret, func(hj *hijackConn) {
 		thePool.findOneAndRemove(hj)
+		cp.ep.Close(hj)
 	})
 	if err != nil {
 		return nil, err
@@ -127,6 +128,7 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 			thePool := conn
 			hj, err = newHijackConn(cp.stopped, c, func(hj *hijackConn) {
 				thePool.findOneAndRemove(hj)
+				cp.ep.Close(hj)
 			})
 			if err != nil {
 				return

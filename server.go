@@ -69,6 +69,7 @@ func (sp *ServerPool) Put(c net.Conn, connID uint16, on func(), userctx ...any) 
 		id := connID
 		doEOF := on
 		hj, err = newHijackConn(sp.stopped, c, func(_ *hijackConn) {
+			sp.ep.Close(hj)
 			sp.connMap.Delete(id)
 			doEOF()
 		})
