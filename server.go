@@ -14,6 +14,11 @@ type ServerPool struct {
 	stop    context.CancelFunc
 }
 
+type ContextConn struct {
+	c     net.Conn
+	value any
+}
+
 func NewServerPool() (*ServerPool, error) {
 	ep, err := NewEpollRoutine()
 	if err != nil {
@@ -41,16 +46,16 @@ func (sp *ServerPool) Close() {
 	})
 }
 
-func (sp *ServerPool) Get(connID uint16) (net.Conn, error) {
+func (sp *ServerPool) Get(connID uint16) (*ContextConn, error) {
 	if c, ok := sp.connMap.Load(connID); ok {
-		if hj, ok := c.(*hijackConn); ok {
+		if hj, ok := c.(*ContextConn); ok {
 			return hj, nil
 		}
 	}
 	return nil, ErrDestNotFound
 }
 
-func (sp *ServerPool) Put(c net.Conn, connID uint16) error {
+func (sp *ServerPool) Put(c net.Conn, connID uint16, userctx ...any) error {
 	var err error
 	hj, ok := c.(*hijackConn)
 	if !ok {
@@ -62,6 +67,12 @@ func (sp *ServerPool) Put(c net.Conn, connID uint16) error {
 			return err
 		}
 		sp.ep.Open(hj)
+	}
+	ctx := &ContextConn{
+		c: c,
+	}
+	if len(userctx) > 0 {
+		ctx.value = userctx[0]
 	}
 	sp.connMap.Store(connID, hj)
 	return nil
