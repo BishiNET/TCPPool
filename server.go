@@ -53,7 +53,7 @@ func (sp *ServerPool) Close() {
 	})
 }
 
-func (sp *ServerPool) Get(connID uint16) (*ContextConn, error) {
+func (sp *ServerPool) Get(connID uint32) (*ContextConn, error) {
 	if c, ok := sp.connMap.Load(connID); ok {
 		if hj, ok := c.(*ContextConn); ok {
 			return hj, nil
@@ -62,7 +62,7 @@ func (sp *ServerPool) Get(connID uint16) (*ContextConn, error) {
 	return nil, ErrDestNotFound
 }
 
-func (sp *ServerPool) Put(c net.Conn, connID uint16, on func(), userctx ...any) error {
+func (sp *ServerPool) Put(c net.Conn, connID uint32, on func(), userctx ...any) error {
 	var err error
 	hj, ok := c.(*hijackConn)
 	if !ok {
@@ -86,4 +86,12 @@ func (sp *ServerPool) Put(c net.Conn, connID uint16, on func(), userctx ...any) 
 	}
 	sp.connMap.Store(connID, ctx)
 	return nil
+}
+
+func (sp *ServerPool) Remove(connID uint32) {
+	if c, ok := sp.connMap.LoadAndDelete(connID); ok {
+		if hj, ok := c.(net.Conn); ok {
+			hj.Close()
+		}
+	}
 }
