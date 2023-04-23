@@ -72,8 +72,10 @@ func (cp *ClientPool) getDialer() *net.Dialer {
 }
 
 func (cp *ClientPool) pushConn(conn *pool, ret net.Conn) (net.Conn, error) {
+	// do a copy to avoid some problem
+	thePool := conn
 	hj, err := newHijackConn(cp.stopped, ret, func(hj *hijackConn) {
-		conn.findOneAndRemove(hj)
+		thePool.findOneAndRemove(hj)
 	})
 	if err != nil {
 		return nil, err
@@ -122,8 +124,9 @@ func (cp *ClientPool) Put(c net.Conn) (err error) {
 		conn := connFromPool.(*pool)
 		hj, ok := c.(*hijackConn)
 		if !ok {
+			thePool := conn
 			hj, err = newHijackConn(cp.stopped, c, func(hj *hijackConn) {
-				conn.findOneAndRemove(hj)
+				thePool.findOneAndRemove(hj)
 			})
 			if err != nil {
 				return
