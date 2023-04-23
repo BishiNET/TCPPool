@@ -22,8 +22,8 @@ const (
 
 type pool struct {
 	current chan net.Conn
-	pool    *list.List
-	poolMu  sync.Mutex
+	pool sync.Map
+	poolLen atomic.Int32
 }
 
 type ClientPool struct {
@@ -37,34 +37,25 @@ type ClientPool struct {
 }
 
 func (p *pool) findOneAndRemove(hj *hijackConn) {
-	p.poolMu.Lock()
-	defer p.poolMu.Unlock()
-	for e := p.pool.Front(); e != nil; e = e.Next() {
-		expect := e.Value.(*hijackConn)
-		if expect == hj {
-			p.pool.Remove(e)
-			return
-		}
-	}
-
+	p.pool.Delete(hj)
+	p.poolLen.Add(-1)
 }
 
 func (p *pool) Close() {
-	p.poolMu.Lock()
-	defer p.poolMu.Unlock()
-	for e := p.pool.Front(); e != nil; e = e.Next() {
-		hj := e.Value.(*hijackConn)
-		hj.Close()
-	}
+	p.pool.Range(func (_, value any) bool{
+		if hj, ok := value.(*hijackConn); ok {
+			hj.Close()
+		}
+		return true
+	})
 }
 
 func (p *pool) Push(c *hijackConn) bool {
-	p.poolMu.Lock()
-	defer p.poolMu.Unlock()
-	if p.pool.Len() >= MAX_POOL_SIZE {
+	if p.poolLen.Add(1) >= MAX_POOL_SIZE {
+		p.poolLen.Add(-1)
 		return false
 	}
-	p.pool.PushBack(c)
+	p.pool.LoadOrStore(c, struct{}{})
 	return true
 }
 
@@ -120,7 +111,6 @@ func (cp *ClientPool) getPool(key string) *pool {
 
 	newConnPool := &pool{
 		current: make(chan net.Conn, cp.poolSize),
-		pool:    list.New(),
 	}
 	if already, ok := cp.poolMap.LoadOrStore(key, newConnPool); ok {
 		conn = already.(*pool)
