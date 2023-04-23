@@ -55,13 +55,15 @@ func (sp *ServerPool) Get(connID uint16) (*ContextConn, error) {
 	return nil, ErrDestNotFound
 }
 
-func (sp *ServerPool) Put(c net.Conn, connID uint16, userctx ...any) error {
+func (sp *ServerPool) Put(c net.Conn, connID uint16, on func(), userctx ...any) error {
 	var err error
 	hj, ok := c.(*hijackConn)
 	if !ok {
 		id := connID
+		doEOF := on
 		hj, err = newHijackConn(sp.stopped, c, func(_ *hijackConn) {
 			sp.connMap.Delete(id)
+			doEOF()
 		})
 		if err != nil {
 			return err
@@ -74,6 +76,6 @@ func (sp *ServerPool) Put(c net.Conn, connID uint16, userctx ...any) error {
 	if len(userctx) > 0 {
 		ctx.value = userctx[0]
 	}
-	sp.connMap.Store(connID, hj)
+	sp.connMap.Store(connID, ctx)
 	return nil
 }
