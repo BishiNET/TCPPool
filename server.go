@@ -19,6 +19,13 @@ type ContextConn struct {
 	value any
 }
 
+func (c *ContextConn) Conn() net.Conn {
+	return c.c
+}
+func (c *ContextConn) Value() any {
+	return c.value
+}
+
 func NewServerPool() (*ServerPool, error) {
 	ep, err := NewEpollRoutine()
 	if err != nil {
