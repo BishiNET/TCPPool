@@ -62,29 +62,45 @@ func (sp *ServerPool) Get(connID uint32) (*ContextConn, error) {
 	return nil, ErrDestNotFound
 }
 
-func (sp *ServerPool) Put(c net.Conn, connID uint32, on func(), userctx ...any) error {
-	var err error
+func (sp *ServerPool) Register(c net.Conn, connID uint32, on func(), userctx ...any) net.Conn {
 	hj, ok := c.(*hijackConn)
-	if !ok {
-		id := connID
-		doEOF := on
-		hj, err = newHijackConn(sp.stopped, c, func(_ *hijackConn) {
-			sp.ep.Close(hj)
-			sp.connMap.Delete(id)
-			doEOF()
-		})
-		if err != nil {
-			return err
-		}
-		sp.ep.Open(hj)
+	if ok {
+		return hj
 	}
+	id := connID
+	doEOF := on
+	hj, err := newHijackConn(sp.stopped, c, func(_ *hijackConn) {
+		sp.ep.Close(hj)
+		sp.connMap.Delete(id)
+		doEOF()
+	})
+
+	if err != nil {
+		return err
+	}
+	sp.ep.Open(hj)
+	if len(userctx) > 0 {
+		ctx.value = userctx[0]
+	}
+
 	ctx := &ContextConn{
 		c: c,
 	}
 	if len(userctx) > 0 {
 		ctx.value = userctx[0]
 	}
+
 	sp.connMap.Store(connID, ctx)
+
+}
+
+func (sp *ServerPool) Put(c net.Conn, connID uint32) error {
+	var err error
+	hj, ok := c.(*hijackConn)
+	if !ok {
+		return ErrUnknownConn
+	}
+	if sp.connMap.Load(connID)
 	return nil
 }
 
