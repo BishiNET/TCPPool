@@ -62,25 +62,21 @@ func (sp *ServerPool) Get(connID uint32) (*ContextConn, error) {
 	return nil, ErrDestNotFound
 }
 
-func (sp *ServerPool) Register(c net.Conn, connID uint32, on func(), userctx ...any) net.Conn {
+func (sp *ServerPool) Register(c net.Conn, connID uint32, on func(), userctx ...any) (net.Conn, error) {
 	hj, ok := c.(*hijackConn)
 	if ok {
-		return hj
+		return hj, nil
 	}
 	id := connID
 	doEOF := on
-	hj, err := newHijackConn(sp.stopped, c, func(_ *hijackConn) {
-		sp.ep.Close(hj)
+	hj, err := newHijackConn(sp.stopped, c, func(hjconn *hijackConn) {
+		sp.ep.Close(hjconn)
 		sp.connMap.Delete(id)
 		doEOF()
 	})
 
 	if err != nil {
-		return err
-	}
-	sp.ep.Open(hj)
-	if len(userctx) > 0 {
-		ctx.value = userctx[0]
+		return nil, err
 	}
 
 	ctx := &ContextConn{
@@ -89,19 +85,10 @@ func (sp *ServerPool) Register(c net.Conn, connID uint32, on func(), userctx ...
 	if len(userctx) > 0 {
 		ctx.value = userctx[0]
 	}
+	sp.ep.Open(hj)
 
 	sp.connMap.Store(connID, ctx)
-
-}
-
-func (sp *ServerPool) Put(c net.Conn, connID uint32) error {
-	var err error
-	hj, ok := c.(*hijackConn)
-	if !ok {
-		return ErrUnknownConn
-	}
-	if sp.connMap.Load(connID)
-	return nil
+	return hj, nil
 }
 
 func (sp *ServerPool) Remove(connID uint32) {
@@ -110,4 +97,8 @@ func (sp *ServerPool) Remove(connID uint32) {
 			hj.Close()
 		}
 	}
+}
+
+func (sp *ServerPool) Delete(connID uint32) {
+	sp.connMap.Delete(connID)
 }
